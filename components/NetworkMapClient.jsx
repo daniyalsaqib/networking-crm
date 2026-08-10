@@ -3,6 +3,9 @@
 import { useState, useEffect, useMemo } from "react";
 import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
 import { ZONES, LAHORE_CENTER, findZone } from "../lib/zones";
+import CsvImportPanel from "./CsvImportPanel";
+import ManualAddForm from "./ManualAddForm";
+import TabNav from "./TabNav";
 
 const BASE_TAGS = ["Friend", "Professional", "APC", "Family", "Business"];
 
@@ -123,70 +126,6 @@ function formatPhoneNumber(digits, format) {
   return result;
 }
 
-function parseCSV(text) {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length === 0) return [];
-  const splitLine = (line) => {
-    const out = [];
-    let cur = "";
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          cur += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (ch === "," && !inQuotes) {
-        out.push(cur);
-        cur = "";
-      } else {
-        cur += ch;
-      }
-    }
-    out.push(cur);
-    return out.map((s) => s.trim());
-  };
-  const header = splitLine(lines[0]).map((h) => h.toLowerCase());
-  const nameIdx = header.findIndex((h) => h === "name");
-  const firstIdx = header.findIndex((h) => h.includes("first name"));
-  const lastIdx = header.findIndex((h) => h.includes("last name"));
-  const orgIdx = header.findIndex((h) => h.includes("organization name"));
-  const phoneIdx = header.findIndex((h) => h.includes("phone"));
-  const emailIdx = header.findIndex(
-    (h) => h.includes("e-mail") || h.includes("email")
-  );
-  const areaIdx = header.findIndex((h) => h === "area");
-  const cityIdx = header.findIndex((h) => h === "city");
-  const tagsIdx = header.findIndex((h) => h === "tags");
-
-  const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cells = splitLine(lines[i]);
-    let name = "";
-    if (nameIdx >= 0 && cells[nameIdx]) name = cells[nameIdx];
-    else {
-      const f = firstIdx >= 0 ? cells[firstIdx] || "" : "";
-      const l = lastIdx >= 0 ? cells[lastIdx] || "" : "";
-      name = `${f} ${l}`.trim();
-    }
-    // Fall back to Organization Name for business contacts with no person name
-    if (!name && orgIdx >= 0 && cells[orgIdx]) name = cells[orgIdx];
-    if (!name) continue;
-    rows.push({
-      name,
-      phone: phoneIdx >= 0 ? cells[phoneIdx] || "" : "",
-      email: emailIdx >= 0 ? cells[emailIdx] || "" : "",
-      area: areaIdx >= 0 ? cells[areaIdx] || "" : "",
-      city: cityIdx >= 0 ? cells[cityIdx] || "Lahore" : "Lahore",
-      tags: tagsIdx >= 0 && cells[tagsIdx] ? cells[tagsIdx].split("|").filter(Boolean) : [],
-    });
-  }
-  return rows;
-}
-
 async function api(path, options) {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -207,8 +146,6 @@ export default function NetworkMapClient() {
   const [search, setSearch] = useState("");
   const [tagFilter, setTagFilter] = useState(null);
   const [selectedZone, setSelectedZone] = useState(null);
-  const [csvText, setCsvText] = useState("");
-  const [importPreview, setImportPreview] = useState(null);
   const [manual, setManual] = useState({
     name: "",
     phone: "",
@@ -347,24 +284,13 @@ export default function NetworkMapClient() {
     }
   }
 
-  function runImportPreview() {
-    setImportPreview(parseCSV(csvText));
-  }
-
-  async function confirmImport() {
-    if (!importPreview) return;
-    try {
-      const inserted = await api("/api/contacts", {
-        method: "PUT",
-        body: JSON.stringify({ bulk: importPreview }),
-      });
-      setContacts((prev) => [...inserted, ...prev]);
-      setImportPreview(null);
-      setCsvText("");
-      setView("directory");
-    } catch (e) {
-      setError(e.message);
-    }
+  async function handleCsvImport(rows) {
+    const inserted = await api("/api/contacts", {
+      method: "PUT",
+      body: JSON.stringify({ bulk: rows }),
+    });
+    setContacts((prev) => [...inserted, ...prev]);
+    setView("directory");
   }
 
   return (
@@ -374,17 +300,7 @@ export default function NetworkMapClient() {
           <div style={styles.eyebrow}>registry / {contacts.length} contacts</div>
           <h1 style={styles.title}>Networking CRM</h1>
         </div>
-        <div style={styles.tabs}>
-          {["map", "directory", "add"].map((v) => (
-            <button
-              key={v}
-              onClick={() => setView(v)}
-              style={{ ...styles.tabBtn, ...(view === v ? styles.tabBtnActive : {}) }}
-            >
-              {v === "map" ? "Map" : v === "directory" ? "Directory" : "Add / import"}
-            </button>
-          ))}
-        </div>
+        <TabNav active={view} onChange={setView} styles={styles} />
       </div>
 
       {error && <div style={styles.errorBanner}>{error}</div>}
@@ -517,57 +433,22 @@ export default function NetworkMapClient() {
 
       {!loading && view === "add" && (
         <div>
-          <div style={styles.sectionLabel}>Import from Google Contacts</div>
-          <p style={styles.body}>
-            Export your Google Contacts as CSV, open the file, paste the contents below.
-          </p>
-          <textarea
-            style={styles.textarea}
-            placeholder="Name,Given Name,Family Name,E-mail 1 - Value,Phone 1 - Value..."
-            value={csvText}
-            onChange={(e) => setCsvText(e.target.value)}
+          <CsvImportPanel
+            onImport={async (rows) => {
+              try {
+                await handleCsvImport(rows);
+              } catch (e) {
+                setError(e.message);
+                throw e;
+              }
+            }}
           />
-          <div style={styles.actionRow}>
-            <button style={styles.primaryBtn} onClick={runImportPreview}>
-              Preview import
-            </button>
-            {importPreview && (
-              <span style={styles.body}>{importPreview.length} contacts found</span>
-            )}
-          </div>
-          {importPreview && (
-            <div style={{ marginTop: "0.75rem" }}>
-              <div style={styles.previewBox}>
-                {importPreview.slice(0, 8).map((p, i) => (
-                  <div key={i}>
-                    {p.name} {p.phone && `· ${p.phone}`}
-                  </div>
-                ))}
-                {importPreview.length > 8 && (
-                  <div>+ {importPreview.length - 8} more</div>
-                )}
-              </div>
-              <button
-                style={{ ...styles.primaryBtn, marginTop: "0.75rem" }}
-                onClick={confirmImport}
-              >
-                Add {importPreview.length} contacts
-              </button>
-            </div>
-          )}
-
-          <div style={{ ...styles.sectionLabel, marginTop: "2rem" }}>
-            Add one manually
-          </div>
-          <div style={styles.form}>
-            <input
-              style={styles.input}
-              placeholder="Name"
-              value={manual.name}
-              onChange={(e) => setManual({ ...manual, name: e.target.value })}
-            />
-            <div style={styles.formRow}>
-              {/* Phone: country code dropdown + formatted number input */}
+          <ManualAddForm
+            manual={manual}
+            setManual={setManual}
+            onSubmit={addManual}
+            zones={ZONES}
+            phoneField={
               <div style={styles.phoneGroup}>
                 <select
                   style={styles.countrySelect}
@@ -603,68 +484,8 @@ export default function NetworkMapClient() {
                   inputMode="numeric"
                 />
               </div>
-              <input
-                style={styles.input}
-                placeholder="Email"
-                value={manual.email}
-                onChange={(e) => setManual({ ...manual, email: e.target.value })}
-              />
-            </div>
-            <div style={styles.formRow}>
-              <input
-                style={styles.input}
-                placeholder="City"
-                value={manual.city}
-                onChange={(e) => setManual({ ...manual, city: e.target.value })}
-              />
-              <input
-                style={styles.input}
-                list="zone-list"
-                placeholder="Area (e.g. DHA)"
-                value={manual.area}
-                onChange={(e) => setManual({ ...manual, area: e.target.value })}
-              />
-              <datalist id="zone-list">
-                {ZONES.map((z) => (
-                  <option key={z.id} value={z.name} />
-                ))}
-              </datalist>
-            </div>
-            <div style={styles.tagFilterRow}>
-              {BASE_TAGS.map((t) => {
-                const active = manual.tags.includes(t);
-                return (
-                  <button
-                    key={t}
-                    onClick={() =>
-                      setManual({
-                        ...manual,
-                        tags: active
-                          ? manual.tags.filter((x) => x !== t)
-                          : [...manual.tags, t],
-                      })
-                    }
-                    style={{
-                      ...styles.tagChip,
-                      borderColor: active ? "#D9A441" : "#2A303B",
-                      color: active ? "#D9A441" : "#B7B4AA",
-                    }}
-                  >
-                    {t}
-                  </button>
-                );
-              })}
-            </div>
-            <input
-              style={styles.input}
-              placeholder="Notes"
-              value={manual.notes}
-              onChange={(e) => setManual({ ...manual, notes: e.target.value })}
-            />
-            <button style={styles.primaryBtn} onClick={addManual}>
-              Add contact
-            </button>
-          </div>
+            }
+          />
         </div>
       )}
     </div>
