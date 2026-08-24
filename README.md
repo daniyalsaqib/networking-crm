@@ -2,9 +2,33 @@
 
 Map and manage contacts by location. Built with Next.js (App Router), PostgreSQL, and Leaflet — matches the stack listed on the resume entry for "Networking CRM System."
 
+## Architecture
+
+**PERN-style** (PostgreSQL, React, Node), with **Next.js API routes instead of Express**.
+
+Classic PERN is PostgreSQL + Express + React + Node as four separate pieces. This repo keeps P, R, and N, but the backend is Next.js `app/api` routes on the same Node process — not a standalone Express server.
+
+```
+Browser (React / Next.js UI)
+        │  fetch("/api/contacts")
+        ▼
+Next.js API routes  (replaces Express)
+        │  raw SQL via pg
+        ▼
+PostgreSQL
+```
+
+| Layer | Role | Where |
+|--------|------|--------|
+| Frontend | UI, map, forms, CSV import | `components/`, `app/page.js` |
+| Backend | REST: list / create / bulk import / update / delete | `app/api/contacts/` |
+| Database | Contacts table | `schema.sql`, `lib/db.js` |
+
+Leaflet is the map library on the frontend only; it is not part of the PERN letters.
+
 ## Stack
 
-- Next.js 14 (App Router, API routes)
+- Next.js 14 (App Router, API routes) — React UI + Node backend in one app
 - PostgreSQL via `pg`
 - Leaflet + react-leaflet for the map
 - No ORM — raw SQL, so the query logic is visible and easy to explain in an interview
