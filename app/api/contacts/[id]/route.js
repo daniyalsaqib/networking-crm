@@ -1,7 +1,11 @@
 import pool from "../../../../lib/db";
 import { NextResponse } from "next/server";
+import { getSessionUser } from "../../../../lib/getSessionUser";
 
 export async function PATCH(request, { params }) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { id } = params;
   const body = await request.json();
 
@@ -22,9 +26,9 @@ export async function PATCH(request, { params }) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
   }
 
-  values.push(id);
+  values.push(id, user.id);
   const { rows } = await pool.query(
-    `UPDATE contacts SET ${updates.join(", ")} WHERE id = $${i} RETURNING *`,
+    `UPDATE contacts SET ${updates.join(", ")} WHERE id = $${i} AND user_id = $${i + 1} RETURNING *`,
     values
   );
 
@@ -35,7 +39,15 @@ export async function PATCH(request, { params }) {
 }
 
 export async function DELETE(request, { params }) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { id } = params;
-  await pool.query("DELETE FROM contacts WHERE id = $1", [id]);
+  const { rowCount } = await pool.query("DELETE FROM contacts WHERE id = $1 AND user_id = $2", [id, user.id]);
+  
+  if (rowCount === 0) {
+    return NextResponse.json({ error: "Contact not found" }, { status: 404 });
+  }
+  
   return NextResponse.json({ ok: true });
 }

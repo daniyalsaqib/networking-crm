@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
 import { ZONES, LAHORE_CENTER, findZone } from "../lib/zones";
 import CsvImportPanel from "./CsvImportPanel";
 import ManualAddForm from "./ManualAddForm";
 import TabNav from "./TabNav";
+import { useSession, signOut } from "next-auth/react";
+import { useRouter } from "next/navigation";
 
 const BASE_TAGS = ["Friend", "Professional", "APC", "Family", "Business"];
 
@@ -139,6 +141,9 @@ async function api(path, options) {
 }
 
 export default function NetworkMapClient() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -159,22 +164,77 @@ export default function NetworkMapClient() {
   const [selectedCountry, setSelectedCountry] = useState(COUNTRY_CODES[0]);
   const [phoneRaw, setPhoneRaw] = useState(""); // raw digits only, no separators
 
+  const activeUserIdRef = useRef(session?.user?.id);
+  useEffect(() => {
+    activeUserIdRef.current = session?.user?.id;
+  }, [session?.user?.id]);
+
   async function refresh() {
+    const requestUserId = session?.user?.id;
+    if (!requestUserId) {
+      setContacts([]);
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const data = await api("/api/contacts");
-      setContacts(data);
-      setError(null);
+      // Discard contact responses from previous session
+      if (activeUserIdRef.current === requestUserId) {
+        setContacts(data);
+        setError(null);
+      }
     } catch (e) {
-      setError(e.message);
+      if (activeUserIdRef.current === requestUserId) {
+        setError(e.message);
+      }
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    refresh();
-  }, []);
+    if (status === "unauthenticated") {
+      setContacts([]);
+      setLoading(false);
+      router.push("/login");
+    }
+  }, [status, router]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const requestUserId = session?.user?.id;
+
+    if (status === "authenticated" && requestUserId) {
+      setContacts([]);
+      setLoading(true);
+
+      api("/api/contacts")
+        .then((data) => {
+          // Discard contact responses from previous session
+          if (!cancelled && activeUserIdRef.current === requestUserId) {
+            setContacts(data);
+            setError(null);
+          }
+        })
+        .catch((e) => {
+          if (!cancelled && activeUserIdRef.current === requestUserId) {
+            setError(e.message);
+          }
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    } else {
+      setContacts([]);
+      setLoading(false);
+    }
+
+    return () => {
+      // Discard in-flight contact response if session changes or component unmounts
+      cancelled = true;
+    };
+  }, [status, session?.user?.id]);
 
   const zoneCounts = useMemo(() => {
     const map = {};
@@ -293,6 +353,9 @@ export default function NetworkMapClient() {
     setView("directory");
   }
 
+  if (status === "loading") return <div style={styles.page}><div style={styles.body}>Loading...</div></div>;
+  if (!session) return null;
+
   return (
     <div style={styles.page}>
       <div style={styles.header}>
@@ -300,7 +363,15 @@ export default function NetworkMapClient() {
           <div style={styles.eyebrow}>registry / {contacts.length} contacts</div>
           <h1 style={styles.title}>Networking CRM</h1>
         </div>
-        <TabNav active={view} onChange={setView} styles={styles} />
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+          <TabNav active={view} onChange={setView} styles={styles} />
+          <span style={{ fontSize: "13px", color: "#8C8A80" }}>
+            {session?.user?.name || session?.user?.email}
+          </span>
+          <button onClick={() => signOut()} style={styles.clearBtn}>
+            Log out
+          </button>
+        </div>
       </div>
 
       {error && <div style={styles.errorBanner}>{error}</div>}
