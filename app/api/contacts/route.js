@@ -1,14 +1,22 @@
 import pool from "../../../lib/db";
 import { NextResponse } from "next/server";
+import { getSessionUser } from "../../../lib/getSessionUser";
 
 export async function GET() {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { rows } = await pool.query(
-    "SELECT * FROM contacts ORDER BY created_at DESC"
+    "SELECT * FROM contacts WHERE user_id = $1 ORDER BY created_at DESC",
+    [user.id]
   );
   return NextResponse.json(rows);
 }
 
 export async function POST(request) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const body = await request.json();
   const {
     name,
@@ -25,9 +33,9 @@ export async function POST(request) {
   }
 
   const { rows } = await pool.query(
-    `INSERT INTO contacts (name, phone, email, city, area, tags, notes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-    [name.trim(), phone, email, city, area, tags, notes]
+    `INSERT INTO contacts (name, phone, email, city, area, tags, notes, user_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    [name.trim(), phone, email, city, area, tags, notes, user.id]
   );
   return NextResponse.json(rows[0], { status: 201 });
 }
@@ -35,6 +43,9 @@ export async function POST(request) {
 // Bulk import support: POST an array to this same route under a different
 // shape { bulk: [...] } so the CSV importer can insert many rows at once.
 export async function PUT(request) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const body = await request.json();
   const list = Array.isArray(body.bulk) ? body.bulk : [];
   if (list.length === 0) {
@@ -48,8 +59,8 @@ export async function PUT(request) {
     for (const c of list) {
       if (!c.name || !c.name.trim()) continue;
       const { rows } = await client.query(
-        `INSERT INTO contacts (name, phone, email, city, area, tags, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        `INSERT INTO contacts (name, phone, email, city, area, tags, notes, user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
         [
           c.name.trim(),
           c.phone || "",
@@ -58,6 +69,7 @@ export async function PUT(request) {
           c.area || "",
           c.tags || [],
           c.notes || "",
+          user.id,
         ]
       );
       inserted.push(rows[0]);
