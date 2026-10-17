@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -14,10 +14,15 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const requestSeqRef = useRef(0);
+  const googleSeqRef = useRef(0);
+
   useEffect(() => {
     const authError = searchParams.get("error");
     if (authError === "OAuthSignin" || authError === "OAuthCallback") {
       setError("Google sign-in is not configured yet or the credentials in .env.local are missing/invalid.");
+    } else if (authError === "AccessDenied") {
+      setError("An account with this email already exists using password login. Please log in with your email and password.");
     } else if (authError) {
       setError(`Authentication error: ${authError}`);
     }
@@ -25,6 +30,7 @@ function LoginForm() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    const currentReq = ++requestSeqRef.current;
     setError("");
     setLoading(true);
     try {
@@ -33,6 +39,7 @@ function LoginForm() {
         password,
         redirect: false,
       });
+      if (requestSeqRef.current !== currentReq) return;
       if (res?.error) {
         setError(
           res.error === "This account uses Google sign-in. Please use the Google button."
@@ -43,20 +50,30 @@ function LoginForm() {
         router.push("/");
       }
     } catch {
-      setError("An unexpected error occurred. Please try again.");
+      if (requestSeqRef.current === currentReq) {
+        setError("An unexpected error occurred. Please try again.");
+      }
     } finally {
-      setLoading(false);
+      if (requestSeqRef.current === currentReq) {
+        setLoading(false);
+      }
     }
   }
 
   async function handleGoogleSignIn() {
+    const currentReq = ++googleSeqRef.current;
     setError("");
     setGoogleLoading(true);
     try {
       await signIn("google", { callbackUrl: "/" });
     } catch {
-      setError("Failed to initiate Google sign-in.");
-      setGoogleLoading(false);
+      if (googleSeqRef.current === currentReq) {
+        setError("Failed to initiate Google sign-in.");
+      }
+    } finally {
+      if (googleSeqRef.current === currentReq) {
+        setGoogleLoading(false);
+      }
     }
   }
 
