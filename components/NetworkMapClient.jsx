@@ -368,7 +368,12 @@ export default function NetworkMapClient() {
           <span style={{ fontSize: "13px", color: "#8C8A80" }}>
             {session?.user?.name || session?.user?.email}
           </span>
-          <button onClick={() => signOut()} style={styles.clearBtn}>
+          <button
+            onClick={() => {
+              signOut({ callbackUrl: "/login" });
+            }}
+            style={styles.clearBtn}
+          >
             Log out
           </button>
         </div>

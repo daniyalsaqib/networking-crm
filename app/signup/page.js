@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -11,10 +11,32 @@ export default function Signup() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const router = useRouter();
+
+  const requestSeqRef = useRef(0);
+  const googleSeqRef = useRef(0);
+
+  async function handleGoogleSignIn() {
+    const currentReq = ++googleSeqRef.current;
+    setError("");
+    setGoogleLoading(true);
+    try {
+      await signIn("google", { callbackUrl: "/" });
+    } catch {
+      if (googleSeqRef.current === currentReq) {
+        setError("Failed to initiate Google sign-in.");
+      }
+    } finally {
+      if (googleSeqRef.current === currentReq) {
+        setGoogleLoading(false);
+      }
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
+    const currentReq = ++requestSeqRef.current;
     setError("");
     setLoading(true);
     try {
@@ -25,9 +47,10 @@ export default function Signup() {
       });
 
       const data = await res.json();
+      if (requestSeqRef.current !== currentReq) return;
+
       if (!res.ok) {
         setError(data.error || "Failed to sign up");
-        setLoading(false);
         return;
       }
 
@@ -37,15 +60,21 @@ export default function Signup() {
         redirect: false,
       });
 
+      if (requestSeqRef.current !== currentReq) return;
+
       if (signInRes?.error) {
         setError("Failed to auto-login. Please proceed to log in.");
-        setLoading(false);
       } else {
         router.push("/");
       }
     } catch {
-      setError("Network error — please check your connection and try again.");
-      setLoading(false);
+      if (requestSeqRef.current === currentReq) {
+        setError("Network error — please check your connection and try again.");
+      }
+    } finally {
+      if (requestSeqRef.current === currentReq) {
+        setLoading(false);
+      }
     }
   }
 
@@ -95,10 +124,21 @@ export default function Signup() {
               minLength={6}
             />
           </div>
-          <button type="submit" disabled={loading} style={{ ...styles.primaryBtn, width: '100%', marginTop: '1rem', opacity: loading ? 0.6 : 1 }}>
+          <button type="submit" disabled={loading || googleLoading} style={{ ...styles.primaryBtn, width: '100%', marginTop: '1rem', opacity: loading ? 0.6 : 1 }}>
             {loading ? "Creating account..." : "Sign up"}
           </button>
         </form>
+
+        <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={loading || googleLoading}
+            style={{ background: "#1C222C", border: "1px solid #2A303B", color: "#B7B4AA", padding: "0.6rem 1.1rem", borderRadius: "8px", fontSize: "13px", cursor: "pointer", width: '100%', opacity: googleLoading ? 0.6 : 1 }}
+          >
+            {googleLoading ? "Connecting to Google..." : "Sign up with Google"}
+          </button>
+        </div>
 
         <div style={{ marginTop: '1.5rem', textAlign: 'center', fontSize: '13px', color: '#B7B4AA' }}>
           Already have an account? <Link href="/login" style={{ color: '#D9A441' }}>Log in</Link>

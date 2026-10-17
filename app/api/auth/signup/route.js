@@ -1,15 +1,44 @@
 import pool from "../../../../lib/db";
 import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
+import { rateLimit, getIP } from "../../../../lib/rateLimit";
 
 export async function POST(request) {
-  try {
-    const body = await request.json();
-    const { name, email, password } = body;
+  const ip = getIP(request);
+  if (rateLimit(ip + ":signup", 5)) {
+    return NextResponse.json(
+      { error: "Too many signup attempts. Please try again in a minute." },
+      { status: 429 }
+    );
+  }
 
-    if (!name || !email || !password || password.length < 6) {
+  try {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
       return NextResponse.json(
-        { error: "Invalid input. Password must be at least 6 characters." },
+        { error: "Invalid request payload." },
+        { status: 400 }
+      );
+    }
+
+    const { name, email, password } = body || {};
+
+    if (
+      typeof name !== "string" || !name.trim() ||
+      typeof email !== "string" || !email.trim() ||
+      typeof password !== "string" || password.length < 6
+    ) {
+      return NextResponse.json(
+        { error: "Invalid input. Name, valid email, and password (at least 6 characters) are required." },
+        { status: 400 }
+      );
+    }
+
+    if (name.length > 120 || email.length > 254 || password.length > 128) {
+      return NextResponse.json(
+        { error: "Input exceeds maximum allowed length." },
         { status: 400 }
       );
     }
@@ -29,10 +58,20 @@ export async function POST(request) {
     const hashedPassword = await bcrypt.hash(password, 12);
     const id = crypto.randomUUID();
 
-    await pool.query(
-      "INSERT INTO users (id, name, email, password, provider) VALUES ($1, $2, $3, $4, $5)",
-      [id, name.trim(), normalizedEmail, hashedPassword, "credentials"]
-    );
+    try {
+      await pool.query(
+        "INSERT INTO users (id, name, email, password, provider) VALUES ($1, $2, $3, $4, $5)",
+        [id, name.trim(), normalizedEmail, hashedPassword, "credentials"]
+      );
+    } catch (dbError) {
+      if (dbError.code === "23505") {
+        return NextResponse.json(
+          { error: "Email already exists" },
+          { status: 409 }
+        );
+      }
+      throw dbError;
+    }
 
     return NextResponse.json({ ok: true }, { status: 201 });
   } catch (error) {
